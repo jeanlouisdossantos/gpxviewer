@@ -10,6 +10,11 @@ export interface SavedTrace {
     minLon: number;
     maxLon: number;
   };
+  // Parameters
+  altitudeThreshold: number;
+  useSlopeColoring: boolean;
+  slopeThreshold1: number;
+  slopeThreshold2: number;
 }
 
 const DB_NAME = 'gpxviewer';
@@ -101,6 +106,14 @@ export async function updateTraceName(id: string, newName: string): Promise<void
   if (trace) {
     trace.name = newName;
     await saveTrace(trace);
+  }
+}
+
+export async function updateTrace(id: string, updates: Partial<SavedTrace>): Promise<void> {
+  const trace = await getTrace(id);
+  if (trace) {
+    const updated = { ...trace, ...updates, id: trace.id, timestamp: trace.timestamp };
+    await saveTrace(updated as SavedTrace);
   }
 }
 

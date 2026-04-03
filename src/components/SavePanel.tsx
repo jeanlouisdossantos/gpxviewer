@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Save, AlertCircle } from 'lucide-react';
 import { GPXData } from '../utils/gpxParser';
 import { checkStorageQuota } from '../utils/indexedDBManager';
@@ -6,15 +6,25 @@ import { checkStorageQuota } from '../utils/indexedDBManager';
 interface SavePanelProps {
   gpxData: GPXData | null;
   fileName: string;
+  currentTraceName: string;
   onSave: (traceName: string) => Promise<void>;
+  isEditingExisting: boolean;
 }
 
-export function SavePanel({ gpxData, fileName, onSave }: SavePanelProps) {
+export function SavePanel({ gpxData, fileName, currentTraceName, onSave, isEditingExisting }: SavePanelProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [traceName, setTraceName] = useState(fileName.replace(/\.gpx$/i, '') || 'Nouvelle trace');
+  const [traceName, setTraceName] = useState(currentTraceName || fileName.replace(/\.gpx$/i, '') || 'Nouvelle trace');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (currentTraceName) {
+      setTraceName(currentTraceName);
+    } else if (fileName) {
+      setTraceName(fileName.replace(/\.gpx$/i, '') || 'Nouvelle trace');
+    }
+  }, [currentTraceName, fileName]);
 
   const handleSave = async () => {
     if (!gpxData || !fileName) {
@@ -34,7 +44,8 @@ export function SavePanel({ gpxData, fileName, onSave }: SavePanelProps) {
       }
 
       await onSave(traceName);
-      setTraceName(fileName.replace(/\.gpx$/i, '') || 'Nouvelle trace');
+      // conserver le nom de trace courant (dossier enregistré) pour éviter l'écrasement accidentel
+      setTraceName(traceName || fileName.replace(/\.gpx$/i, '') || 'Nouvelle trace');
       setIsOpen(false);
     } catch (err) {
       setError(`Erreur lors de la sauvegarde: ${err instanceof Error ? err.message : 'Erreur inconnue'}`);
@@ -58,10 +69,12 @@ export function SavePanel({ gpxData, fileName, onSave }: SavePanelProps) {
           Sauvegarder
         </button>
       ) : (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999] p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full z-[10000] relative">
             <div className="bg-gradient-to-r from-green-500 to-green-600 text-white p-4 rounded-t-lg">
-              <h2 className="text-xl font-bold">Sauvegarder la trace</h2>
+              <h2 className="text-xl font-bold">
+                {isEditingExisting ? 'Mettre à jour la trace' : 'Sauvegarder la trace'}
+              </h2>
             </div>
 
             <div className="p-6 space-y-4">
@@ -86,6 +99,11 @@ export function SavePanel({ gpxData, fileName, onSave }: SavePanelProps) {
                 <p>
                   <strong>Points:</strong> {gpxData.points.length}
                 </p>
+                {isEditingExisting && (
+                  <p className="mt-2 text-blue-600">
+                    <strong>ℹ️</strong> Les modifications écraseront la sauvegarde précédente
+                  </p>
+                )}
               </div>
 
               {error && (
@@ -119,7 +137,11 @@ export function SavePanel({ gpxData, fileName, onSave }: SavePanelProps) {
                   disabled={isSaving}
                   className="flex-1 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors font-medium disabled:opacity-50"
                 >
-                  {isSaving ? 'Sauvegarde...' : 'Enregistrer'}
+                  {isSaving ? (
+                    isEditingExisting ? 'Mise à jour...' : 'Sauvegarde...'
+                  ) : (
+                    isEditingExisting ? 'Mettre à jour' : 'Enregistrer'
+                  )}
                 </button>
               </div>
             </div>

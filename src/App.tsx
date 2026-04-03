@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useSnackbar } from 'notistack';
 import { Upload } from 'lucide-react';
 import { parseGPX, GPXData } from './utils/gpxParser';
 import { segmentTrack, calculateStats } from './utils/segmentUtils';
@@ -6,7 +7,7 @@ import { MapView } from './components/MapView';
 import { StatsPanel } from './components/StatsPanel';
 import { SavePanel } from './components/SavePanel';
 import { HistoryMenu } from './components/HistoryMenu';
-import { saveTrace, SavedTrace } from './utils/indexedDBManager';
+import { saveTrace, SavedTrace, updateTrace } from './utils/indexedDBManager';
 
 function App() {
   const [gpxData, setGpxData] = useState<GPXData | null>(null);
@@ -16,12 +17,17 @@ function App() {
   const [useSlopeColoring, setUseSlopeColoring] = useState<boolean>(false);
   const [slopeThreshold1, setSlopeThreshold1] = useState<number>(5);
   const [slopeThreshold2, setSlopeThreshold2] = useState<number>(10);
+  const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
+  const [currentTraceName, setCurrentTraceName] = useState<string>('Nouvelle trace');
+  const { enqueueSnackbar } = useSnackbar();
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setFileName(file.name);
+    setCurrentTraceId(null);
+    setCurrentTraceName(file.name.replace(/\.gpx$/i, '') || 'Nouvelle trace');
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target?.result as string;
@@ -30,7 +36,7 @@ function App() {
         const data = parseGPX(content);
         setGpxData(data);
       } catch (error) {
-        alert('Erreur lors de la lecture du fichier GPX');
+        enqueueSnackbar('Erreur lors de la lecture du fichier GPX', { variant: 'error' });
         console.error(error);
       }
     };
@@ -39,24 +45,46 @@ function App() {
 
   const handleSaveTrace = async (traceName: string) => {
     if (!gpxData || !gpxContent) {
-      alert('Veuillez charger un fichier GPX avant de sauvegarder');
+      enqueueSnackbar('Veuillez charger un fichier GPX avant de sauvegarder', { variant: 'warning' });
       return;
     }
 
     try {
-      const trace: SavedTrace = {
-        id: `trace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        name: traceName,
-        gpxContent: gpxContent,
-        timestamp: Date.now(),
-        fileName: fileName,
-        bounds: gpxData.bounds
-      };
+      if (currentTraceId) {
+        // Mise à jour de la trace existante
+        await updateTrace(currentTraceId, {
+          name: traceName,
+          gpxContent: gpxContent,
+          fileName: fileName,
+          bounds: gpxData.bounds,
+          altitudeThreshold,
+          useSlopeColoring,
+          slopeThreshold1,
+          slopeThreshold2
+        });
+        enqueueSnackbar('Trace mise à jour avec succès', { variant: 'success' });
+      } else {
+        // Création d'une nouvelle trace
+        const trace: SavedTrace = {
+          id: `trace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: traceName,
+          gpxContent: gpxContent,
+          timestamp: Date.now(),
+          fileName: fileName,
+          bounds: gpxData.bounds,
+          altitudeThreshold,
+          useSlopeColoring,
+          slopeThreshold1,
+          slopeThreshold2
+        };
 
-      await saveTrace(trace);
-      alert('Trace sauvegardée avec succès!');
+        await saveTrace(trace);
+        setCurrentTraceId(trace.id);
+        setCurrentTraceName(traceName);
+        enqueueSnackbar('Trace sauvegardée avec succès', { variant: 'success' });
+      }
     } catch (error) {
-      alert(`Erreur lors de la sauvegarde: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+      enqueueSnackbar(`Erreur lors de la sauvegarde : ${error instanceof Error ? error.message : 'Erreur inconnue'}`, { variant: 'error' });
     }
   };
 
@@ -64,11 +92,20 @@ function App() {
     try {
       setFileName(trace.fileName);
       setGpxContent(trace.gpxContent);
+      setCurrentTraceId(trace.id);
+      
+      // Restaurer les paramètres avec des valeurs par défaut pour les anciennes traces
+      setAltitudeThreshold(trace.altitudeThreshold ?? 1000);
+      setUseSlopeColoring(trace.useSlopeColoring ?? false);
+      setSlopeThreshold1(trace.slopeThreshold1 ?? 5);
+      setSlopeThreshold2(trace.slopeThreshold2 ?? 10);
+      
       const data = parseGPX(trace.gpxContent);
+      setCurrentTraceName(trace.name);
       setGpxData(data);
-      alert(`Trace "${trace.name}" chargée avec succès!`);
+      enqueueSnackbar(`Trace "${trace.name}" chargée avec succès`, { variant: 'success' });
     } catch (error) {
-      alert(`Erreur lors du chargement de la trace: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+      enqueueSnackbar(`Erreur lors du chargement de la trace : ${error instanceof Error ? error.message : 'Erreur inconnue'}`, { variant: 'error' });
     }
   };
 
@@ -186,7 +223,9 @@ function App() {
                 <SavePanel 
                   gpxData={gpxData} 
                   fileName={fileName}
+                  currentTraceName={currentTraceName}
                   onSave={handleSaveTrace}
+                  isEditingExisting={currentTraceId !== null}
                 />
                 <HistoryMenu onLoadTrace={handleLoadTrace} />
               </div>
