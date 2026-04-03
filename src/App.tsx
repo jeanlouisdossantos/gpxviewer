@@ -117,8 +117,8 @@ function App() {
   const [isMapOpen, setIsMapOpen] = useState<boolean>(true);
 
   const stats = useMemo(() => {
-    return calculateStats(segments);
-  }, [segments]);
+    return calculateStats(segments, gpxData?.points || [], useSlopeColoring, slopeThreshold1, slopeThreshold2, altitudeThreshold);
+  }, [segments, gpxData, useSlopeColoring, slopeThreshold1, slopeThreshold2, altitudeThreshold]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100">
@@ -301,12 +301,18 @@ function App() {
             </div>
           )}
 
-          {gpxData && segments.length > 0 && !useSlopeColoring && (
+          {gpxData && segments.length > 0 && (
             <StatsPanel
               totalDistance={stats.totalDistance}
               aboveThresholdDistance={stats.aboveThresholdDistance}
+              belowThresholdDistance={stats.belowThresholdDistance}
               percentage={stats.percentage}
               altitudeThreshold={altitudeThreshold}
+              minAltitude={stats.minAltitude}
+              maxAltitude={stats.maxAltitude}
+              uphillDistance={stats.uphillDistance}
+              downhillDistance={stats.downhillDistance}
+              flatDistance={stats.flatDistance}
             />
           )}
 

@@ -144,7 +144,14 @@ export function getSlopeCategory(
   }
 }
 
-export function calculateStats(segments: Segment[]) {
+export function calculateStats(
+  segments: Segment[],
+  points: TrackPoint[],
+  useSlopeColoring: boolean,
+  slopeThreshold1: number,
+  slopeThreshold2: number,
+  altitudeThreshold: number
+) {
   const totalDistance = segments.reduce((sum, seg) => sum + seg.length, 0);
   const aboveThresholdDistance = segments
     .filter(seg => seg.isAboveThreshold)
@@ -152,9 +159,59 @@ export function calculateStats(segments: Segment[]) {
 
   const percentage = totalDistance > 0 ? (aboveThresholdDistance / totalDistance) * 100 : 0;
 
+  const elevations = points.map(p => p.ele);
+  const minAltitude = elevations.length ? Math.min(...elevations) : 0;
+  const maxAltitude = elevations.length ? Math.max(...elevations) : 0;
+
+  let uphillDistance = 0;
+  let downhillDistance = 0;
+  let flatDistance = 0;
+
+  if (points.length > 1) {
+    for (let i = 1; i < points.length; i++) {
+      const prev = points[i - 1];
+      const curr = points[i];
+      const elevationDiff = curr.ele - prev.ele;
+      const segmentDistance = calculateDistance(prev.lat, prev.lon, curr.lat, curr.lon);
+
+      if (Math.abs(elevationDiff) < 1) {
+        flatDistance += segmentDistance;
+      } else if (elevationDiff > 0) {
+        uphillDistance += segmentDistance;
+      } else {
+        downhillDistance += segmentDistance;
+      }
+    }
+  }
+
+  // En mode pente, on se base sur les catégories de segments
+  if (useSlopeColoring) {
+    uphillDistance = 0;
+    downhillDistance = 0;
+    flatDistance = 0;
+
+    segments.forEach((seg) => {
+      if (!seg.slopeCategory) return;
+      if (seg.slopeCategory.startsWith('uphill')) {
+        uphillDistance += seg.length;
+      } else if (seg.slopeCategory.startsWith('downhill')) {
+        downhillDistance += seg.length;
+      }
+      if (seg.slopeCategory.endsWith('gentle')) {
+        flatDistance += seg.length;
+      }
+    });
+  }
+
   return {
     totalDistance,
     aboveThresholdDistance,
-    percentage
+    percentage,
+    belowThresholdDistance: Math.max(0, totalDistance - aboveThresholdDistance),
+    minAltitude,
+    maxAltitude,
+    uphillDistance,
+    downhillDistance,
+    flatDistance
   };
 }
