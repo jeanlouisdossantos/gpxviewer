@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useSnackbar } from 'notistack';
-import { Upload } from 'lucide-react';
+import { Upload, ChevronDown, ChevronUp } from 'lucide-react';
 import { parseGPX, GPXData } from './utils/gpxParser';
 import { segmentTrack, calculateStats } from './utils/segmentUtils';
 import { MapView } from './components/MapView';
@@ -113,6 +113,8 @@ function App() {
     if (!gpxData) return [];
     return segmentTrack(gpxData.points, altitudeThreshold, slopeThreshold1, slopeThreshold2, useSlopeColoring);
   }, [gpxData, altitudeThreshold, slopeThreshold1, slopeThreshold2, useSlopeColoring]);
+
+  const [isMapOpen, setIsMapOpen] = useState<boolean>(true);
 
   const stats = useMemo(() => {
     return calculateStats(segments);
@@ -277,17 +279,35 @@ function App() {
           </div>
 
           {gpxData && segments.length > 0 && (
-            <>
-              <MapView segments={segments} bounds={gpxData.bounds} useSlopeColoring={useSlopeColoring} />
-              {!useSlopeColoring && (
-                <StatsPanel
-                  totalDistance={stats.totalDistance}
-                  aboveThresholdDistance={stats.aboveThresholdDistance}
-                  percentage={stats.percentage}
-                  altitudeThreshold={altitudeThreshold}
-                />
-              )}
-            </>
+            <div className="bg-white rounded-lg shadow-lg mb-6">
+              <button
+                type="button"
+                onClick={() => setIsMapOpen((prev) => !prev)}
+                className="w-full flex items-center justify-between px-4 py-3 text-left text-gray-800 hover:bg-gray-100 transition-colors"
+              >
+                <span className="font-semibold text-lg">Carte (vue détaillée)</span>
+                {isMapOpen ? (
+                  <ChevronUp className="w-5 h-5 text-gray-600" />
+                ) : (
+                  <ChevronDown className="w-5 h-5 text-gray-600" />
+                )}
+              </button>
+
+              <div className={`overflow-hidden transition-all duration-300 ${isMapOpen ? 'max-h-[700px]' : 'max-h-0'}`}>
+                <div className="p-4">
+                  <MapView segments={segments} bounds={gpxData.bounds} useSlopeColoring={useSlopeColoring} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {gpxData && segments.length > 0 && !useSlopeColoring && (
+            <StatsPanel
+              totalDistance={stats.totalDistance}
+              aboveThresholdDistance={stats.aboveThresholdDistance}
+              percentage={stats.percentage}
+              altitudeThreshold={altitudeThreshold}
+            />
           )}
 
           {!gpxData && (
