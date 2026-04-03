@@ -4,9 +4,13 @@ import { parseGPX, GPXData } from './utils/gpxParser';
 import { segmentTrack, calculateStats } from './utils/segmentUtils';
 import { MapView } from './components/MapView';
 import { StatsPanel } from './components/StatsPanel';
+import { SavePanel } from './components/SavePanel';
+import { HistoryMenu } from './components/HistoryMenu';
+import { saveTrace, SavedTrace } from './utils/indexedDBManager';
 
 function App() {
   const [gpxData, setGpxData] = useState<GPXData | null>(null);
+  const [gpxContent, setGpxContent] = useState<string>('');
   const [altitudeThreshold, setAltitudeThreshold] = useState<number>(1000);
   const [fileName, setFileName] = useState<string>('');
   const [useSlopeColoring, setUseSlopeColoring] = useState<boolean>(false);
@@ -22,6 +26,7 @@ function App() {
     reader.onload = (e) => {
       const content = e.target?.result as string;
       try {
+        setGpxContent(content);
         const data = parseGPX(content);
         setGpxData(data);
       } catch (error) {
@@ -30,6 +35,41 @@ function App() {
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleSaveTrace = async (traceName: string) => {
+    if (!gpxData || !gpxContent) {
+      alert('Veuillez charger un fichier GPX avant de sauvegarder');
+      return;
+    }
+
+    try {
+      const trace: SavedTrace = {
+        id: `trace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        name: traceName,
+        gpxContent: gpxContent,
+        timestamp: Date.now(),
+        fileName: fileName,
+        bounds: gpxData.bounds
+      };
+
+      await saveTrace(trace);
+      alert('Trace sauvegardée avec succès!');
+    } catch (error) {
+      alert(`Erreur lors de la sauvegarde: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+    }
+  };
+
+  const handleLoadTrace = (trace: SavedTrace) => {
+    try {
+      setFileName(trace.fileName);
+      setGpxContent(trace.gpxContent);
+      const data = parseGPX(trace.gpxContent);
+      setGpxData(data);
+      alert(`Trace "${trace.name}" chargée avec succès!`);
+    } catch (error) {
+      alert(`Erreur lors du chargement de la trace: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+    }
   };
 
   const segments = useMemo(() => {
@@ -140,6 +180,15 @@ function App() {
                 <label htmlFor="slope-toggle" className="text-sm font-medium text-gray-700 cursor-pointer">
                   Colorer par pente
                 </label>
+              </div>
+
+              <div className="flex gap-2">
+                <SavePanel 
+                  gpxData={gpxData} 
+                  fileName={fileName}
+                  onSave={handleSaveTrace}
+                />
+                <HistoryMenu onLoadTrace={handleLoadTrace} />
               </div>
             </div>
 
