@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
-import { MapContainer, TileLayer, Polyline, useMap } from 'react-leaflet';
-import { LatLngBounds } from 'leaflet';
+import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
+import { LatLngBounds, divIcon } from 'leaflet';
 import { Segment } from '../utils/segmentUtils';
+import { TrackPoint } from '../utils/gpxParser';
 import 'leaflet/dist/leaflet.css';
 
 interface MapViewProps {
@@ -13,6 +14,7 @@ interface MapViewProps {
     maxLon: number;
   };
   useSlopeColoring?: boolean;
+  points?: TrackPoint[];
 }
 
 function getSegmentColor(segment: Segment, useSlopeColoring: boolean): string {
@@ -27,6 +29,20 @@ function getSegmentColor(segment: Segment, useSlopeColoring: boolean): string {
     }
   }
   return segment.isAboveThreshold ? '#ef4444' : '#22c55e';
+}
+
+function getHighestAndLowestPoints(points: TrackPoint[]): [TrackPoint | null, TrackPoint | null] {
+  if (points.length === 0) return [null, null];
+  
+  let highest = points[0];
+  let lowest = points[0];
+  
+  for (const point of points) {
+    if (point.ele > highest.ele) highest = point;
+    if (point.ele < lowest.ele) lowest = point;
+  }
+  
+  return [highest, lowest];
 }
 
 function MapBounds({ bounds }: { bounds: MapViewProps['bounds'] }) {
@@ -45,7 +61,21 @@ function MapBounds({ bounds }: { bounds: MapViewProps['bounds'] }) {
   return null;
 }
 
-export function MapView({ segments, bounds, useSlopeColoring = false }: MapViewProps) {
+export function MapView({ segments, bounds, useSlopeColoring = false, points = [] }: MapViewProps) {
+  const [highest, lowest] = getHighestAndLowestPoints(points);
+
+  const highestIcon = divIcon({
+    html: '<div style="background-color: #ef4444; color: white; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">⬆️</div>',
+    iconSize: [32, 32],
+    className: 'custom-marker'
+  });
+
+  const lowestIcon = divIcon({
+    html: '<div style="background-color: #3b82f6; color: white; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">⬇️</div>',
+    iconSize: [32, 32],
+    className: 'custom-marker'
+  });
+
   return (
     <MapContainer
       center={[46.2, 6.15]}
@@ -83,6 +113,22 @@ export function MapView({ segments, bounds, useSlopeColoring = false }: MapViewP
           }}
         />
       ))}
+      {highest && (
+        <Marker position={[highest.lat, highest.lon]} icon={highestIcon}>
+          <Popup>
+            <div className="font-semibold">Point le plus haut</div>
+            <div className="text-sm">Altitude: {highest.ele.toFixed(0)} m</div>
+          </Popup>
+        </Marker>
+      )}
+      {lowest && (
+        <Marker position={[lowest.lat, lowest.lon]} icon={lowestIcon}>
+          <Popup>
+            <div className="font-semibold">Point le plus bas</div>
+            <div className="text-sm">Altitude: {lowest.ele.toFixed(0)} m</div>
+          </Popup>
+        </Marker>
+      )}
     </MapContainer>
   );
 }

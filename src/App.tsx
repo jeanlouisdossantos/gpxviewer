@@ -295,7 +295,7 @@ function App() {
 
               <div className={`overflow-hidden transition-all duration-300 ${isMapOpen ? 'max-h-[700px]' : 'max-h-0'}`}>
                 <div className="p-4">
-                  <MapView segments={segments} bounds={gpxData.bounds} useSlopeColoring={useSlopeColoring} />
+                  <MapView segments={segments} bounds={gpxData.bounds} useSlopeColoring={useSlopeColoring} points={gpxData.points} />
                 </div>
               </div>
             </div>
