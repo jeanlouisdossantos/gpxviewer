@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useCallback, useState } from 'react';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import { LatLngBounds, divIcon } from 'leaflet';
 import { Segment } from '../utils/segmentUtils';
@@ -45,16 +45,28 @@ function getHighestAndLowestPoints(points: TrackPoint[]): [TrackPoint | null, Tr
   return [highest, lowest];
 }
 
+function createMarkerIcon(bgColor: string, label: string, ariaLabel: string): ReturnType<typeof divIcon> {
+  return divIcon({
+    html: `<div role="img" aria-label="${ariaLabel}" style="background-color: ${bgColor}; color: white; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2); font-size: 18px;">${label}</div>`,
+    iconSize: [32, 32],
+    className: 'custom-marker'
+  });
+}
+
 function MapBounds({ bounds }: { bounds: MapViewProps['bounds'] }) {
   const map = useMap();
 
   useEffect(() => {
-    if (bounds.minLat !== Infinity) {
-      const leafletBounds = new LatLngBounds(
-        [bounds.minLat, bounds.minLon],
-        [bounds.maxLat, bounds.maxLon]
-      );
-      map.fitBounds(leafletBounds, { padding: [50, 50] });
+    if (bounds.minLat !== Infinity && bounds.maxLat !== -Infinity) {
+      try {
+        const leafletBounds = new LatLngBounds(
+          [bounds.minLat, bounds.minLon],
+          [bounds.maxLat, bounds.maxLon]
+        );
+        map.fitBounds(leafletBounds, { padding: [50, 50] });
+      } catch (error) {
+        console.error('Erreur lors du calcul des limites de la carte:', error);
+      }
     }
   }, [bounds, map]);
 
@@ -62,25 +74,67 @@ function MapBounds({ bounds }: { bounds: MapViewProps['bounds'] }) {
 }
 
 export function MapView({ segments, bounds, useSlopeColoring = false, points = [] }: MapViewProps) {
-  const [highest, lowest] = getHighestAndLowestPoints(points);
+  const [mapHeight, setMapHeight] = useState(500);
 
-  const highestIcon = divIcon({
-    html: '<div style="background-color: #ef4444; color: white; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">⬆️</div>',
-    iconSize: [32, 32],
-    className: 'custom-marker'
-  });
+  // Optimiser le calcul des points hauts/bas
+  const [highest, lowest] = useMemo(
+    () => getHighestAndLowestPoints(points),
+    [points]
+  );
 
-  const lowestIcon = divIcon({
-    html: '<div style="background-color: #3b82f6; color: white; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">⬇️</div>',
-    iconSize: [32, 32],
-    className: 'custom-marker'
-  });
+  // Générer des identifiants uniques pour les segments (basés sur leurs positions)
+  const segmentIds = useMemo(
+    () => segments.map((_, i) => `segment-${i}-${segments.length}`),
+    [segments]
+  );
+
+  // Mémoriser les icônes
+  const [highestIcon, lowestIcon] = useMemo(
+    () => [
+      createMarkerIcon('#ef4444', '⬆️', 'Point le plus haut de la trace'),
+      createMarkerIcon('#3b82f6', '⬇️', 'Point le plus bas de la trace')
+    ],
+    []
+  );
+
+  // Créer des handlers mémorisés
+  const handleSegmentMouseover = useCallback((e: any, segment: Segment) => {
+    e.target.setStyle({ weight: 6, opacity: 1 });
+    let tooltip = `Distance: ${segment.length.toFixed(2)} km`;
+    if (useSlopeColoring && segment.slope !== undefined) {
+      tooltip += ` | Pente: ${segment.slope.toFixed(1)}%`;
+    }
+    e.target.bindTooltip(tooltip, { permanent: false, sticky: true }).openTooltip();
+  }, [useSlopeColoring]);
+
+  const handleSegmentMouseout = useCallback((e: any) => {
+    e.target.setStyle({ weight: 4, opacity: 0.8 });
+    e.target.closeTooltip();
+  }, []);
+
+  // Ajuster la hauteur de la carte sur les petits écrans
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 768) {
+        setMapHeight(300);
+      } else {
+        setMapHeight(500);
+      }
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Vérifier si highest et lowest sont différents
+  const hasElevationChange = highest && lowest && highest.ele !== lowest.ele;
 
   return (
     <MapContainer
       center={[46.2, 6.15]}
       zoom={13}
-      style={{ height: '500px', width: '100%' }}
+      style={{ height: `${mapHeight}px`, width: '100%' }}
       className="rounded-lg shadow-lg"
     >
       <TileLayer
@@ -90,7 +144,7 @@ export function MapView({ segments, bounds, useSlopeColoring = false, points = [
       <MapBounds bounds={bounds} />
       {segments.map((segment, index) => (
         <Polyline
-          key={index}
+          key={segmentIds[index]}
           positions={segment.points}
           pathOptions={{
             color: getSegmentColor(segment, useSlopeColoring),
@@ -98,22 +152,12 @@ export function MapView({ segments, bounds, useSlopeColoring = false, points = [
             opacity: 0.8
           }}
           eventHandlers={{
-            mouseover: (e) => {
-              e.target.setStyle({ weight: 6, opacity: 1 });
-              let tooltip = `Distance: ${segment.length.toFixed(2)} km`;
-              if (useSlopeColoring && segment.slope !== undefined) {
-                tooltip += ` | Pente: ${segment.slope.toFixed(1)}%`;
-              }
-              e.target.bindTooltip(tooltip, { permanent: false, sticky: true }).openTooltip();
-            },
-            mouseout: (e) => {
-              e.target.setStyle({ weight: 4, opacity: 0.8 });
-              e.target.closeTooltip();
-            }
+            mouseover: (e) => handleSegmentMouseover(e, segment),
+            mouseout: handleSegmentMouseout
           }}
         />
       ))}
-      {highest && (
+      {highest && hasElevationChange && (
         <Marker position={[highest.lat, highest.lon]} icon={highestIcon}>
           <Popup>
             <div className="font-semibold">Point le plus haut</div>
@@ -121,7 +165,7 @@ export function MapView({ segments, bounds, useSlopeColoring = false, points = [
           </Popup>
         </Marker>
       )}
-      {lowest && (
+      {lowest && hasElevationChange && (
         <Marker position={[lowest.lat, lowest.lon]} icon={lowestIcon}>
           <Popup>
             <div className="font-semibold">Point le plus bas</div>
