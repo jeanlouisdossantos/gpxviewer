@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 import { useSnackbar } from 'notistack';
 import { Upload, ChevronDown, ChevronUp } from 'lucide-react';
-import { parseGPX, GPXData } from './utils/gpxParser';
+import { parseGPX, GPXData, TrackPoint } from './utils/gpxParser';
 import { segmentTrack, calculateStats } from './utils/segmentUtils';
 import { MapView } from './components/MapView';
 import { StatsPanel } from './components/StatsPanel';
+import { AltitudeProfile } from './components/AltitudeProfile';
 import { SavePanel } from './components/SavePanel';
 import { HistoryMenu } from './components/HistoryMenu';
 import { saveTrace, SavedTrace, updateTrace } from './utils/indexedDBManager';
@@ -17,6 +18,7 @@ function App() {
   const [useSlopeColoring, setUseSlopeColoring] = useState<boolean>(false);
   const [slopeThreshold1, setSlopeThreshold1] = useState<number>(5);
   const [slopeThreshold2, setSlopeThreshold2] = useState<number>(10);
+  const [hoveredPoint, setHoveredPoint] = useState<TrackPoint | null>(null);
   const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
   const [currentTraceName, setCurrentTraceName] = useState<string>('Nouvelle trace');
   const { enqueueSnackbar } = useSnackbar();
@@ -114,6 +116,8 @@ function App() {
     return segmentTrack(gpxData.points, altitudeThreshold, slopeThreshold1, slopeThreshold2, useSlopeColoring);
   }, [gpxData, altitudeThreshold, slopeThreshold1, slopeThreshold2, useSlopeColoring]);
 
+  const [isStatsOpen, setIsStatsOpen] = useState<boolean>(true);
+  const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
   const [isMapOpen, setIsMapOpen] = useState<boolean>(true);
 
   const stats = useMemo(() => {
@@ -295,25 +299,77 @@ function App() {
 
               <div className={`overflow-hidden transition-all duration-300 ${isMapOpen ? 'max-h-[700px]' : 'max-h-0'}`}>
                 <div className="p-4">
-                  <MapView segments={segments} bounds={gpxData.bounds} useSlopeColoring={useSlopeColoring} points={gpxData.points} />
+                  <MapView segments={segments} bounds={gpxData.bounds} useSlopeColoring={useSlopeColoring} points={gpxData.points} hoverPosition={hoveredPoint ? { lat: hoveredPoint.lat, lon: hoveredPoint.lon } : null} />
                 </div>
               </div>
             </div>
           )}
 
           {gpxData && segments.length > 0 && (
-            <StatsPanel
-              totalDistance={stats.totalDistance}
-              aboveThresholdDistance={stats.aboveThresholdDistance}
-              belowThresholdDistance={stats.belowThresholdDistance}
-              percentage={stats.percentage}
-              altitudeThreshold={altitudeThreshold}
-              minAltitude={stats.minAltitude}
-              maxAltitude={stats.maxAltitude}
-              uphillDistance={stats.uphillDistance}
-              downhillDistance={stats.downhillDistance}
-              flatDistance={stats.flatDistance}
-            />
+            <div className="bg-white rounded-lg shadow-lg mb-6">
+              <button
+                type="button"
+                onClick={() => setIsStatsOpen((prev) => !prev)}
+                className="w-full flex items-center justify-between px-4 py-3 text-left text-gray-800 hover:bg-gray-100 transition-colors"
+              >
+                <span className="font-semibold text-lg">Statistiques du parcours</span>
+                {isStatsOpen ? (
+                  <ChevronUp className="w-5 h-5 text-gray-600" />
+                ) : (
+                  <ChevronDown className="w-5 h-5 text-gray-600" />
+                )}
+              </button>
+
+              <div className={`overflow-hidden transition-all duration-300 ${isStatsOpen ? 'max-h-[1000px]' : 'max-h-0'}`}>
+                <div className="p-4">
+                  <StatsPanel
+                    totalDistance={stats.totalDistance}
+                    aboveThresholdDistance={stats.aboveThresholdDistance}
+                    belowThresholdDistance={stats.belowThresholdDistance}
+                    percentage={stats.percentage}
+                    altitudeThreshold={altitudeThreshold}
+                    minAltitude={stats.minAltitude}
+                    maxAltitude={stats.maxAltitude}
+                    uphillDistance={stats.uphillDistance}
+                    downhillDistance={stats.downhillDistance}
+                    flatDistance={stats.flatDistance}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {gpxData && segments.length > 0 && (
+            <div className="bg-white rounded-lg shadow-lg mb-6">
+              <button
+                type="button"
+                onClick={() => setIsProfileOpen((prev) => !prev)}
+                className="w-full flex items-center justify-between px-4 py-3 text-left text-gray-800 hover:bg-gray-100 transition-colors"
+              >
+                <span className="font-semibold text-lg">Profil altimétrique</span>
+                {isProfileOpen ? (
+                  <ChevronUp className="w-5 h-5 text-gray-600" />
+                ) : (
+                  <ChevronDown className="w-5 h-5 text-gray-600" />
+                )}
+              </button>
+
+              <div className={`overflow-hidden transition-all duration-300 ${isProfileOpen ? 'max-h-[1000px]' : 'max-h-0'}`}>
+                <div className="p-4">
+                  <AltitudeProfile
+                    points={gpxData.points}
+                    useSlopeColoring={useSlopeColoring}
+                    slopeThreshold1={slopeThreshold1}
+                    slopeThreshold2={slopeThreshold2}
+                    onHover={(index) => {
+                      if (index === null) return setHoveredPoint(null);
+                      const pt = gpxData.points[index];
+                      setHoveredPoint(pt ?? null);
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
           )}
 
           {!gpxData && (

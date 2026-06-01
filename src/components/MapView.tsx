@@ -15,6 +15,7 @@ interface MapViewProps {
   };
   useSlopeColoring?: boolean;
   points?: TrackPoint[];
+  hoverPosition?: { lat: number; lon: number } | null;
 }
 
 function getSegmentColor(segment: Segment, useSlopeColoring: boolean): string {
@@ -73,7 +74,7 @@ function MapBounds({ bounds }: { bounds: MapViewProps['bounds'] }) {
   return null;
 }
 
-export function MapView({ segments, bounds, useSlopeColoring = false, points = [] }: MapViewProps) {
+export function MapView({ segments, bounds, useSlopeColoring = false, points = [], hoverPosition = null }: MapViewProps) {
   const [mapHeight, setMapHeight] = useState(500);
 
   // Optimiser le calcul des points hauts/bas
@@ -170,6 +171,15 @@ export function MapView({ segments, bounds, useSlopeColoring = false, points = [
           <Popup>
             <div className="font-semibold">Point le plus bas</div>
             <div className="text-sm">Altitude: {lowest.ele.toFixed(0)} m</div>
+          </Popup>
+        </Marker>
+      )}
+
+      {hoverPosition && (
+        <Marker position={[hoverPosition.lat, hoverPosition.lon]} icon={createMarkerIcon('#f59e0b', '●', 'Position survolée')}>
+          <Popup>
+            <div className="font-semibold">Position survolée</div>
+            <div className="text-sm">{hoverPosition.lat.toFixed(6)}, {hoverPosition.lon.toFixed(6)}</div>
           </Popup>
         </Marker>
       )}

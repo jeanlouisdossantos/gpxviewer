@@ -144,6 +144,31 @@ export function getSlopeCategory(
   }
 }
 
+function calculateAboveThresholdDistance(points: TrackPoint[], altitudeThreshold: number): number {
+  let aboveDistance = 0;
+
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const segmentDistance = calculateDistance(prev.lat, prev.lon, curr.lat, curr.lon);
+    const prevAbove = prev.ele >= altitudeThreshold;
+    const currAbove = curr.ele >= altitudeThreshold;
+
+    if (prevAbove && currAbove) {
+      aboveDistance += segmentDistance;
+    } else if (prevAbove !== currAbove) {
+      const elevationDiff = curr.ele - prev.ele;
+      if (elevationDiff !== 0) {
+        const ratio = Math.abs((altitudeThreshold - prev.ele) / elevationDiff);
+        const abovePortion = currAbove ? 1 - ratio : ratio;
+        aboveDistance += segmentDistance * abovePortion;
+      }
+    }
+  }
+
+  return aboveDistance;
+}
+
 export function calculateStats(
   segments: Segment[],
   points: TrackPoint[],
@@ -153,9 +178,7 @@ export function calculateStats(
   altitudeThreshold: number
 ) {
   const totalDistance = segments.reduce((sum, seg) => sum + seg.length, 0);
-  const aboveThresholdDistance = segments
-    .filter(seg => seg.isAboveThreshold)
-    .reduce((sum, seg) => sum + seg.length, 0);
+  const aboveThresholdDistance = calculateAboveThresholdDistance(points, altitudeThreshold);
 
   const percentage = totalDistance > 0 ? (aboveThresholdDistance / totalDistance) * 100 : 0;
 
