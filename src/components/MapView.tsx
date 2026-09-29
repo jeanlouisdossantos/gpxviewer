@@ -145,8 +145,10 @@ export function MapView({ segments, bounds, useSlopeColoring = false, points = [
       className="rounded-lg shadow-lg"
     >
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution={import.meta.env.VITE_TILE_ATTRIBUTION
+          ?? '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}
+        url={import.meta.env.VITE_TILE_URL
+          ?? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'}
       />
       <MapBounds bounds={bounds} />
       {segments.map((segment, index) => (
