@@ -19,6 +19,9 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      // Nouvelle règle du plugin v7 : signale les setState dans les effets.
+      // Passée en warn car elle produit des faux positifs (setState après await).
+      'react-hooks/set-state-in-effect': 'warn',
       'react-refresh/only-export-components': [
         'warn',
         { allowConstantExport: true },
