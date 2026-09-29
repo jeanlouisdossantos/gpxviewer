@@ -46,6 +46,22 @@ export function AltitudeProfile({ points, useSlopeColoring = false, slopeThresho
   const height = 260;
   const padding = 32;
 
+  // Le SVG garde son ratio (preserveAspectRatio "xMidYMid meet" par défaut):
+  // il est mis à l'échelle uniformément puis centré dans son conteneur.
+  // Toute conversion client <-> viewBox doit donc passer par ce facteur
+  // d'échelle et ces offsets, sinon le survol est décalé.
+  const getSvgMetrics = useCallback(() => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const scale = Math.min(rect.width / width, rect.height / height);
+    return {
+      rect,
+      scale,
+      offsetX: (rect.width - width * scale) / 2,
+      offsetY: (rect.height - height * scale) / 2
+    };
+  }, []);
+
   const totalDistance = profile.length ? profile[profile.length - 1].distance : 0;
   const minElevation = profile.length ? Math.min(...profile.map((entry) => entry.elevation)) : 0;
   const maxElevation = profile.length ? Math.max(...profile.map((entry) => entry.elevation)) : 0;
@@ -92,28 +108,25 @@ export function AltitudeProfile({ points, useSlopeColoring = false, slopeThresho
         const entry = profile[idx];
         if (!entry) return;
         // compute tooltip position relative to container
-        if (svgRef.current) {
-          const rect = svgRef.current.getBoundingClientRect();
+        const metrics = getSvgMetrics();
+        if (metrics) {
           const x = padding + (entry.distance / Math.max(totalDistance, 1)) * (width - padding * 2);
           const y = height - padding - ((entry.elevation - minElevation) / elevationRange) * (height - padding * 2);
-          // map svg (viewBox) coords to client pixels using svg rect
-          const scaleX = rect.width / width;
-          const scaleY = rect.height / height;
-          const clientXPos = rect.left + x * scaleX;
-          const clientYPos = rect.top + y * scaleY;
+          // map svg (viewBox) coords to client pixels, letterbox inclus
+          const clientXPos = metrics.rect.left + metrics.offsetX + x * metrics.scale;
+          const clientYPos = metrics.rect.top + metrics.offsetY + y * metrics.scale;
           setTooltip({ x: clientXPos, y: clientYPos, elevation: entry.elevation, distance: entry.distance });
         }
         onHover?.(idx);
       });
     }
-  }, [profile, onHover, totalDistance, minElevation, elevationRange]);
+  }, [profile, onHover, totalDistance, minElevation, elevationRange, getSvgMetrics]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    if (!svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left; // px inside svg
-    // convert mouseX (client px) -> svg viewBox x
-    const svgX = (mouseX / rect.width) * width;
+    const metrics = getSvgMetrics();
+    if (!metrics) return;
+    // convert client px -> svg viewBox x, letterbox inclus
+    const svgX = (e.clientX - metrics.rect.left - metrics.offsetX) / metrics.scale;
 
     // If mouse is outside the drawing area (left/right padding), ignore hover
     if (svgX < padding || svgX > (width - padding)) {
@@ -136,7 +149,7 @@ export function AltitudeProfile({ points, useSlopeColoring = false, slopeThresho
       closest = lo - 1;
     }
     handleHoverIndex(closest);
-  }, [profile, totalDistance, handleHoverIndex]);
+  }, [profile, totalDistance, handleHoverIndex, getSvgMetrics]);
 
   const handleMouseLeave = useCallback(() => {
     handleHoverIndex(null);
