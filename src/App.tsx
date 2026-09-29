@@ -1,7 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useSnackbar } from 'notistack';
 import { Upload, ChevronDown, ChevronUp } from 'lucide-react';
-import { parseGPX, GPXData, TrackPoint } from './utils/gpxParser';
+import { parseGPX, GPXData, TrackPoint, computeCumulativeDistances } from './utils/gpxParser';
 import { segmentTrack, calculateStats } from './utils/segmentUtils';
 import { MapView } from './components/MapView';
 import { StatsPanel } from './components/StatsPanel';
@@ -9,6 +9,10 @@ import { AltitudeProfile } from './components/AltitudeProfile';
 import { SavePanel } from './components/SavePanel';
 import { HistoryMenu } from './components/HistoryMenu';
 import { saveTrace, SavedTrace, updateTrace } from './utils/indexedDBManager';
+
+function isGpxFile(file: File): boolean {
+  return file.name.toLowerCase().endsWith('.gpx') || file.type === 'application/gpx+xml';
+}
 
 function App() {
   const [gpxData, setGpxData] = useState<GPXData | null>(null);
@@ -18,14 +22,18 @@ function App() {
   const [useSlopeColoring, setUseSlopeColoring] = useState<boolean>(false);
   const [slopeThreshold1, setSlopeThreshold1] = useState<number>(5);
   const [slopeThreshold2, setSlopeThreshold2] = useState<number>(10);
-  const [hoveredPoint, setHoveredPoint] = useState<TrackPoint | null>(null);
+  const [hoveredProfileIndex, setHoveredProfileIndex] = useState<number | null>(null);
+  const [segmentHoverIndex, setSegmentHoverIndex] = useState<number | null>(null);
   const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
   const [currentTraceName, setCurrentTraceName] = useState<string>('Nouvelle trace');
+  const [isDragging, setIsDragging] = useState<boolean>(false);
   const { enqueueSnackbar } = useSnackbar();
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const loadFile = useCallback((file: File) => {
+    if (!isGpxFile(file)) {
+      enqueueSnackbar('Veuillez choisir un fichier GPX', { variant: 'warning' });
+      return;
+    }
 
     setFileName(file.name);
     setCurrentTraceId(null);
@@ -34,15 +42,32 @@ function App() {
     reader.onload = (e) => {
       const content = e.target?.result as string;
       try {
-        setGpxContent(content);
         const data = parseGPX(content);
+        setGpxContent(content);
         setGpxData(data);
+        setHoveredProfileIndex(null);
+        setSegmentHoverIndex(null);
       } catch (error) {
-        enqueueSnackbar('Erreur lors de la lecture du fichier GPX', { variant: 'error' });
+        enqueueSnackbar(error instanceof Error ? error.message : 'Erreur lors de la lecture du fichier GPX', { variant: 'error' });
         console.error(error);
       }
     };
     reader.readAsText(file);
+  }, [enqueueSnackbar]);
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    loadFile(file);
+    // Permettre de recharger le même fichier
+    event.target.value = '';
+  };
+
+  const handleDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    setIsDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) loadFile(file);
   };
 
   const handleSaveTrace = async (traceName: string) => {
@@ -95,37 +120,59 @@ function App() {
       setFileName(trace.fileName);
       setGpxContent(trace.gpxContent);
       setCurrentTraceId(trace.id);
-      
+
       // Restaurer les paramètres avec des valeurs par défaut pour les anciennes traces
       setAltitudeThreshold(trace.altitudeThreshold ?? 1000);
       setUseSlopeColoring(trace.useSlopeColoring ?? false);
       setSlopeThreshold1(trace.slopeThreshold1 ?? 5);
       setSlopeThreshold2(trace.slopeThreshold2 ?? 10);
-      
+
       const data = parseGPX(trace.gpxContent);
       setCurrentTraceName(trace.name);
       setGpxData(data);
+      setHoveredProfileIndex(null);
+      setSegmentHoverIndex(null);
       enqueueSnackbar(`Trace "${trace.name}" chargée avec succès`, { variant: 'success' });
     } catch (error) {
       enqueueSnackbar(`Erreur lors du chargement de la trace : ${error instanceof Error ? error.message : 'Erreur inconnue'}`, { variant: 'error' });
     }
   };
 
+  // Distances cumulées calculées une seule fois, partagées par tous les modules
+  const cumulativeDistances = useMemo(
+    () => (gpxData ? computeCumulativeDistances(gpxData.points) : []),
+    [gpxData]
+  );
+
   const segments = useMemo(() => {
     if (!gpxData) return [];
-    return segmentTrack(gpxData.points, altitudeThreshold, slopeThreshold1, slopeThreshold2, useSlopeColoring);
-  }, [gpxData, altitudeThreshold, slopeThreshold1, slopeThreshold2, useSlopeColoring]);
+    return segmentTrack(gpxData.points, altitudeThreshold, slopeThreshold1, slopeThreshold2, useSlopeColoring, cumulativeDistances);
+  }, [gpxData, altitudeThreshold, slopeThreshold1, slopeThreshold2, useSlopeColoring, cumulativeDistances]);
 
   const [isStatsOpen, setIsStatsOpen] = useState<boolean>(true);
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
   const [isMapOpen, setIsMapOpen] = useState<boolean>(true);
 
   const stats = useMemo(() => {
-    return calculateStats(segments, gpxData?.points || [], useSlopeColoring, slopeThreshold1, slopeThreshold2, altitudeThreshold);
-  }, [segments, gpxData, useSlopeColoring, slopeThreshold1, slopeThreshold2, altitudeThreshold]);
+    if (!gpxData) return null;
+    return calculateStats(segments, gpxData.points, useSlopeColoring, slopeThreshold1, slopeThreshold2, altitudeThreshold, cumulativeDistances);
+  }, [segments, gpxData, useSlopeColoring, slopeThreshold1, slopeThreshold2, altitudeThreshold, cumulativeDistances]);
+
+  // Point survolé sur le profil -> marqueur sur la carte
+  const hoveredPoint: (TrackPoint & { distance: number }) | null = useMemo(() => {
+    if (!gpxData || hoveredProfileIndex == null) return null;
+    const point = gpxData.points[hoveredProfileIndex];
+    if (!point) return null;
+    return { ...point, distance: cumulativeDistances[hoveredProfileIndex] ?? 0 };
+  }, [gpxData, hoveredProfileIndex, cumulativeDistances]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100">
+    <div
+      className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100"
+      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+      onDragLeave={(e) => { if (e.target === e.currentTarget) setIsDragging(false); }}
+      onDrop={handleDrop}
+    >
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-6xl mx-auto">
           <header className="text-center mb-8">
@@ -153,11 +200,15 @@ function App() {
                   />
                   <label
                     htmlFor="gpx-upload"
-                    className="flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
+                    className={`flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+                      isDragging
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-300 hover:border-blue-500 hover:bg-blue-50'
+                    }`}
                   >
                     <Upload className="w-5 h-5 text-gray-500" />
                     <span className="text-gray-700">
-                      {fileName || 'Choisir un fichier GPX'}
+                      {fileName || 'Choisir ou déposer un fichier GPX'}
                     </span>
                   </label>
                 </div>
@@ -299,13 +350,20 @@ function App() {
 
               <div className={`overflow-hidden transition-all duration-300 ${isMapOpen ? 'max-h-[700px]' : 'max-h-0'}`}>
                 <div className="p-4">
-                  <MapView segments={segments} bounds={gpxData.bounds} useSlopeColoring={useSlopeColoring} points={gpxData.points} hoverPosition={hoveredPoint ? { lat: hoveredPoint.lat, lon: hoveredPoint.lon } : null} />
+                  <MapView
+                    segments={segments}
+                    bounds={gpxData.bounds}
+                    useSlopeColoring={useSlopeColoring}
+                    points={gpxData.points}
+                    hoverPosition={hoveredPoint ? { lat: hoveredPoint.lat, lon: hoveredPoint.lon, ele: hoveredPoint.ele, distance: hoveredPoint.distance } : null}
+                    onSegmentHover={setSegmentHoverIndex}
+                  />
                 </div>
               </div>
             </div>
           )}
 
-          {gpxData && segments.length > 0 && (
+          {gpxData && segments.length > 0 && stats && (
             <div className="bg-white rounded-lg shadow-lg mb-6">
               <button
                 type="button"
@@ -361,11 +419,9 @@ function App() {
                     useSlopeColoring={useSlopeColoring}
                     slopeThreshold1={slopeThreshold1}
                     slopeThreshold2={slopeThreshold2}
-                    onHover={(index) => {
-                      if (index === null) return setHoveredPoint(null);
-                      const pt = gpxData.points[index];
-                      setHoveredPoint(pt ?? null);
-                    }}
+                    cumulativeDistances={cumulativeDistances}
+                    externalHoverIndex={segmentHoverIndex}
+                    onHover={(index) => setHoveredProfileIndex(index)}
                   />
                 </div>
               </div>
@@ -373,13 +429,20 @@ function App() {
           )}
 
           {!gpxData && (
-            <div className="bg-white rounded-lg shadow-lg p-12 text-center">
+            <div
+              className={`bg-white rounded-lg shadow-lg p-12 text-center transition-colors ${
+                isDragging ? 'border-2 border-dashed border-blue-500 bg-blue-50' : ''
+              }`}
+            >
               <Upload className="w-16 h-16 text-gray-400 mx-auto mb-4" />
               <h3 className="text-xl font-semibold text-gray-700 mb-2">
                 Aucun fichier chargé
               </h3>
               <p className="text-gray-500">
                 Importez un fichier GPX pour commencer l'analyse
+              </p>
+              <p className="text-sm text-gray-400 mt-2">
+                ou déposez-le directement ici
               </p>
             </div>
           )}

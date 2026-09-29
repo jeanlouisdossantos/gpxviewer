@@ -6,6 +6,18 @@ interface HistoryMenuProps {
   onLoadTrace: (trace: SavedTrace) => void;
 }
 
+function downloadTrace(trace: SavedTrace) {
+  const blob = new Blob([trace.gpxContent], { type: 'application/gpx+xml' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${trace.name.replace(/[\\/:*?"<>|]/g, '_')}.gpx`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 export function HistoryMenu({ onLoadTrace }: HistoryMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [traces, setTraces] = useState<SavedTrace[]>([]);
@@ -25,6 +37,11 @@ export function HistoryMenu({ onLoadTrace }: HistoryMenuProps) {
     }
   };
 
+  // Charger les traces dès le montage pour afficher le compteur
+  useEffect(() => {
+    loadTraces();
+  }, []);
+
   useEffect(() => {
     if (isOpen) {
       loadTraces();
@@ -36,8 +53,7 @@ export function HistoryMenu({ onLoadTrace }: HistoryMenuProps) {
     setIsOpen(false);
   };
 
-  const handleDeleteTrace = async (id: string, event: React.MouseEvent) => {
-    event.stopPropagation();
+  const handleDeleteTrace = async (id: string) => {
     if (confirm('Êtes-vous sûr de vouloir supprimer cette trace ?')) {
       try {
         await deleteTrace(id);
@@ -82,6 +98,7 @@ export function HistoryMenu({ onLoadTrace }: HistoryMenuProps) {
               <button
                 onClick={() => setIsOpen(false)}
                 className="hover:bg-blue-700 p-1 rounded"
+                aria-label="Fermer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -105,32 +122,39 @@ export function HistoryMenu({ onLoadTrace }: HistoryMenuProps) {
               ) : (
                 <ul className="space-y-2">
                   {traces.map((trace) => (
-                    <li key={trace.id}>
+                    <li key={trace.id} className="p-3 border border-gray-200 rounded-lg hover:border-blue-300 transition-colors group flex items-start justify-between gap-2">
                       <button
                         onClick={() => handleLoadTrace(trace)}
-                        className="w-full text-left p-3 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors group"
+                        className="flex-1 text-left"
                       >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <h3 className="font-semibold text-gray-900 group-hover:text-blue-600">
-                              {trace.name}
-                            </h3>
-                            <p className="text-xs text-gray-500 mt-1">
-                              {trace.fileName}
-                            </p>
-                            <p className="text-xs text-gray-400 mt-1">
-                              {formatDate(trace.timestamp)}
-                            </p>
-                          </div>
-                          <button
-                            onClick={(e) => handleDeleteTrace(trace.id, e)}
-                            className="ml-3 p-2 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                            title="Supprimer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
+                        <h3 className="font-semibold text-gray-900 group-hover:text-blue-600">
+                          {trace.name}
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {trace.fileName}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          {formatDate(trace.timestamp)}
+                        </p>
                       </button>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => downloadTrace(trace)}
+                          className="p-2 text-gray-400 hover:text-blue-600 rounded hover:bg-blue-50 transition-colors"
+                          title="Télécharger le fichier GPX"
+                          aria-label={`Télécharger ${trace.name}`}
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTrace(trace.id)}
+                          className="p-2 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors"
+                          title="Supprimer"
+                          aria-label={`Supprimer ${trace.name}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>

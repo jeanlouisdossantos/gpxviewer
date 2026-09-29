@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { TrackPoint, calculateDistance } from '../utils/gpxParser';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { TrackPoint, computeCumulativeDistances } from '../utils/gpxParser';
 import { calculateSignedSlope, getSlopeCategory } from '../utils/segmentUtils';
 
 interface AltitudeProfileProps {
@@ -8,6 +8,9 @@ interface AltitudeProfileProps {
   slopeThreshold1?: number;
   slopeThreshold2?: number;
   onHover?: (index: number | null) => void; // index of point hovered, or null
+  /** Index de point imposé depuis l'extérieur (ex: survol d'un segment sur la carte) */
+  externalHoverIndex?: number | null;
+  cumulativeDistances?: number[];
 }
 
 // Couleurs basées sur la pente (plat/descente -> vert, faux plat -> orange, forte pente -> rouge)
@@ -20,55 +23,28 @@ const SLOPE_COLOR_MAP: Record<string, string> = {
   'downhill-steep': '#16a34a'
 };
 
-export function AltitudeProfile({ points, useSlopeColoring = false, slopeThreshold1 = 5, slopeThreshold2 = 10, onHover }: AltitudeProfileProps) {
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+export function AltitudeProfile({ points, useSlopeColoring = false, slopeThreshold1 = 5, slopeThreshold2 = 10, onHover, externalHoverIndex = null, cumulativeDistances }: AltitudeProfileProps) {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; elevation: number; distance: number } | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const pendingIndexRef = useRef<number | null>(null);
 
+  const cumulative = useMemo(
+    () => cumulativeDistances ?? computeCumulativeDistances(points),
+    [points, cumulativeDistances]
+  );
+
   const profile = useMemo(() => {
     const result: { distance: number; elevation: number }[] = [];
-    let totalDistance = 0;
     for (let i = 0; i < points.length; i++) {
-      const point = points[i];
-      if (i > 0) {
-        const previous = points[i - 1];
-        totalDistance += calculateDistance(previous.lat, previous.lon, point.lat, point.lon);
-      }
-      result.push({ distance: totalDistance, elevation: point.ele });
+      result.push({ distance: cumulative[i], elevation: points[i].ele });
     }
     return result;
-  }, [points]);
+  }, [points, cumulative]);
 
   const width = 700;
   const height = 260;
   const padding = 32;
-
-  const [containerWidth, setContainerWidth] = useState<number | null>(null);
-
-  useEffect(() => {
-    const updateWidth = () => {
-      if (svgRef.current) setContainerWidth(svgRef.current.clientWidth);
-    };
-
-    updateWidth();
-
-    // Prefer ResizeObserver when available
-    let ro: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== 'undefined' && svgRef.current) {
-      ro = new ResizeObserver(() => updateWidth());
-      ro.observe(svgRef.current);
-    } else {
-      window.addEventListener('resize', updateWidth);
-    }
-
-    return () => {
-      if (ro && svgRef.current) ro.unobserve(svgRef.current);
-      else window.removeEventListener('resize', updateWidth);
-    };
-  }, []);
 
   const totalDistance = profile.length ? profile[profile.length - 1].distance : 0;
   const minElevation = profile.length ? Math.min(...profile.map((entry) => entry.elevation)) : 0;
@@ -90,7 +66,7 @@ export function AltitudeProfile({ points, useSlopeColoring = false, slopeThresho
       const b = coords[i];
       let color = '#1d4ed8';
       if (useSlopeColoring && points[i - 1] && points[i]) {
-        const distanceKm = Math.max( calculateDistance(points[i-1].lat, points[i-1].lon, points[i].lat, points[i].lon), 0.000001 );
+        const distanceKm = Math.max( cumulative[i] - cumulative[i - 1], 0.000001 );
         const slope = calculateSignedSlope(points[i].ele - points[i-1].ele, distanceKm);
         const cat = getSlopeCategory(slope, slopeThreshold1, slopeThreshold2);
         color = SLOPE_COLOR_MAP[cat] ?? color;
@@ -98,9 +74,9 @@ export function AltitudeProfile({ points, useSlopeColoring = false, slopeThresho
       segs.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, color });
     }
     return segs;
-  }, [coords, points, useSlopeColoring, slopeThreshold1, slopeThreshold2]);
+  }, [coords, points, cumulative, useSlopeColoring, slopeThreshold1, slopeThreshold2]);
 
-  const handleHoverIndex = useCallback((index: number | null, clientX?: number, clientY?: number) => {
+  const handleHoverIndex = useCallback((index: number | null) => {
     // throttle via rAF
     pendingIndexRef.current = index;
     if (rafRef.current == null) {
@@ -108,7 +84,6 @@ export function AltitudeProfile({ points, useSlopeColoring = false, slopeThresho
         rafRef.current = null;
         const idx = pendingIndexRef.current;
         pendingIndexRef.current = null;
-        setHoverIndex(idx);
         if (idx === null) {
           setTooltip(null);
           onHover?.(null);
@@ -146,25 +121,32 @@ export function AltitudeProfile({ points, useSlopeColoring = false, slopeThresho
       return;
     }
 
-    // find closest point by svg x
-    let closest = 0;
-    let bestDist = Infinity;
-    coords.forEach((c, i) => {
-      const d = Math.abs(c.x - svgX);
-      if (d < bestDist) {
-        bestDist = d;
-        closest = i;
-      }
-    });
-    handleHoverIndex(closest, e.clientX, e.clientY);
-  }, [coords, handleHoverIndex]);
+    // find closest point by svg x (distances cumulées croissantes -> recherche binaire)
+    const target = padding + ((svgX - padding) / (width - padding * 2)) * Math.max(totalDistance, 1);
+    let lo = 0;
+    let hi = profile.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (profile[mid].distance < target) lo = mid + 1;
+      else hi = mid;
+    }
+    // recule d'un cran si le point précédent est plus proche
+    let closest = lo;
+    if (lo > 0 && Math.abs(profile[lo - 1].distance - target) <= Math.abs(profile[lo].distance - target)) {
+      closest = lo - 1;
+    }
+    handleHoverIndex(closest);
+  }, [profile, totalDistance, handleHoverIndex]);
 
   const handleMouseLeave = useCallback(() => {
     handleHoverIndex(null);
   }, [handleHoverIndex]);
 
+  // Curseur externe (survol d'un segment sur la carte)
+  const externalCoord = externalHoverIndex != null && coords[externalHoverIndex] ? coords[externalHoverIndex] : null;
+
   return (
-    <div ref={containerRef} className="relative rounded-lg bg-slate-50 border border-slate-200 p-4">
+    <div className="relative rounded-lg bg-slate-50 border border-slate-200 p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
         <div>
           <h3 className="text-lg font-semibold text-slate-800">Profil altimétrique</h3>
@@ -191,7 +173,7 @@ export function AltitudeProfile({ points, useSlopeColoring = false, slopeThresho
 
           {/* markers for points: invisible circles for hover precision */}
           {coords.map((c, i) => (
-            <circle key={i} cx={c.x} cy={c.y} r={6} fill="transparent" pointerEvents="all" onMouseEnter={(ev) => handleHoverIndex(i, ev.clientX, ev.clientY)} />
+            <circle key={i} cx={c.x} cy={c.y} r={6} fill="transparent" pointerEvents="all" onMouseEnter={() => handleHoverIndex(i)} />
           ))}
 
           <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="#e2e8f0" strokeDasharray="3 3" />
@@ -199,6 +181,14 @@ export function AltitudeProfile({ points, useSlopeColoring = false, slopeThresho
           <text x={padding} y={padding - 8} className="text-xs fill-slate-500" fontSize="12">{maxElevation.toFixed(0)} m</text>
           <text x={padding} y={height - padding + 18} className="text-xs fill-slate-500" fontSize="12">{minElevation.toFixed(0)} m</text>
           <text x={width - padding} y={height - 8} textAnchor="end" className="text-xs fill-slate-500" fontSize="12">{totalDistance.toFixed(2)} km</text>
+
+          {/* curseur vertical piloté depuis la carte */}
+          {externalCoord && (
+            <g pointerEvents="none">
+              <line x1={externalCoord.x} y1={padding} x2={externalCoord.x} y2={height - padding} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 3" />
+              <circle cx={externalCoord.x} cy={externalCoord.y} r={5} fill="#f59e0b" stroke="white" strokeWidth={2} />
+            </g>
+          )}
         </svg>
 
         {tooltip && (

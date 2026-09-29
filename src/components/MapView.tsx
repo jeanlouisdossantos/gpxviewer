@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useCallback, useState } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
-import { LatLngBounds, divIcon } from 'leaflet';
+import { MapContainer, TileLayer, Polyline, Marker, Popup, Tooltip, CircleMarker, useMap } from 'react-leaflet';
+import { LatLngBounds, divIcon, LeafletMouseEvent } from 'leaflet';
 import { Segment } from '../utils/segmentUtils';
 import { TrackPoint } from '../utils/gpxParser';
 import 'leaflet/dist/leaflet.css';
@@ -15,7 +15,9 @@ interface MapViewProps {
   };
   useSlopeColoring?: boolean;
   points?: TrackPoint[];
-  hoverPosition?: { lat: number; lon: number } | null;
+  hoverPosition?: { lat: number; lon: number; ele?: number; distance?: number } | null;
+  /** Appelé avec l'index médian d'un segment survolé, ou null quand le survol se termine */
+  onSegmentHover?: (pointIndex: number | null) => void;
 }
 
 function getSegmentColor(segment: Segment, useSlopeColoring: boolean): string {
@@ -34,15 +36,15 @@ function getSegmentColor(segment: Segment, useSlopeColoring: boolean): string {
 
 function getHighestAndLowestPoints(points: TrackPoint[]): [TrackPoint | null, TrackPoint | null] {
   if (points.length === 0) return [null, null];
-  
+
   let highest = points[0];
   let lowest = points[0];
-  
+
   for (const point of points) {
     if (point.ele > highest.ele) highest = point;
     if (point.ele < lowest.ele) lowest = point;
   }
-  
+
   return [highest, lowest];
 }
 
@@ -74,7 +76,7 @@ function MapBounds({ bounds }: { bounds: MapViewProps['bounds'] }) {
   return null;
 }
 
-export function MapView({ segments, bounds, useSlopeColoring = false, points = [], hoverPosition = null }: MapViewProps) {
+export function MapView({ segments, bounds, useSlopeColoring = false, points = [], hoverPosition = null, onSegmentHover }: MapViewProps) {
   const [mapHeight, setMapHeight] = useState(500);
 
   // Optimiser le calcul des points hauts/bas
@@ -99,19 +101,23 @@ export function MapView({ segments, bounds, useSlopeColoring = false, points = [
   );
 
   // Créer des handlers mémorisés
-  const handleSegmentMouseover = useCallback((e: any, segment: Segment) => {
+  const handleSegmentMouseover = useCallback((e: LeafletMouseEvent, segment: Segment) => {
     e.target.setStyle({ weight: 6, opacity: 1 });
     let tooltip = `Distance: ${segment.length.toFixed(2)} km`;
     if (useSlopeColoring && segment.slope !== undefined) {
       tooltip += ` | Pente: ${segment.slope.toFixed(1)}%`;
     }
     e.target.bindTooltip(tooltip, { permanent: false, sticky: true }).openTooltip();
-  }, [useSlopeColoring]);
+    // Index médian du segment pour positionner le curseur sur le profil
+    const middleIndex = Math.floor((segment.startIndex + segment.endIndex) / 2);
+    onSegmentHover?.(middleIndex);
+  }, [useSlopeColoring, onSegmentHover]);
 
-  const handleSegmentMouseout = useCallback((e: any) => {
+  const handleSegmentMouseout = useCallback((e: LeafletMouseEvent) => {
     e.target.setStyle({ weight: 4, opacity: 0.8 });
     e.target.closeTooltip();
-  }, []);
+    onSegmentHover?.(null);
+  }, [onSegmentHover]);
 
   // Ajuster la hauteur de la carte sur les petits écrans
   useEffect(() => {
@@ -176,12 +182,21 @@ export function MapView({ segments, bounds, useSlopeColoring = false, points = [
       )}
 
       {hoverPosition && (
-        <Marker position={[hoverPosition.lat, hoverPosition.lon]} icon={createMarkerIcon('#f59e0b', '●', 'Position survolée')}>
-          <Popup>
-            <div className="font-semibold">Position survolée</div>
-            <div className="text-sm">{hoverPosition.lat.toFixed(6)}, {hoverPosition.lon.toFixed(6)}</div>
-          </Popup>
-        </Marker>
+        <CircleMarker
+          center={[hoverPosition.lat, hoverPosition.lon]}
+          pathOptions={{ color: '#fff', weight: 2, fillColor: '#f59e0b', fillOpacity: 1 }}
+          radius={8}
+        >
+          <Tooltip permanent direction="top" offset={[0, -10]} className="font-semibold">
+            {hoverPosition.ele !== undefined && (
+              <span>{hoverPosition.ele.toFixed(0)} m</span>
+            )}
+            {hoverPosition.ele !== undefined && hoverPosition.distance !== undefined && ' · '}
+            {hoverPosition.distance !== undefined && (
+              <span>{hoverPosition.distance.toFixed(2)} km</span>
+            )}
+          </Tooltip>
+        </CircleMarker>
       )}
     </MapContainer>
   );

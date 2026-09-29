@@ -1,4 +1,4 @@
-import { TrackPoint, calculateDistance } from './gpxParser';
+import { TrackPoint, computeCumulativeDistances } from './gpxParser';
 
 export interface Segment {
   points: [number, number][];
@@ -6,6 +6,9 @@ export interface Segment {
   length: number;
   slope?: number;
   slopeCategory?: 'uphill-gentle' | 'uphill-moderate' | 'uphill-steep' | 'downhill-gentle' | 'downhill-moderate' | 'downhill-steep';
+  /** Indices de début (inclus) et de fin (exclu) des points de la trace couverts par ce segment */
+  startIndex: number;
+  endIndex: number;
 }
 
 export function calculateSlope(ele1: number, ele2: number, horizontalDistance: number): number {
@@ -19,9 +22,12 @@ export function segmentTrack(
   altitudeThreshold: number,
   slopeThreshold1: number = 5,
   slopeThreshold2: number = 10,
-  useSlopeColoring: boolean = false
+  useSlopeColoring: boolean = false,
+  cumulativeDistances?: number[]
 ): Segment[] {
   if (points.length < 2) return [];
+
+  const distances = cumulativeDistances ?? computeCumulativeDistances(points);
 
   if (useSlopeColoring) {
     // Compute signed slope for each interval, group consecutive intervals by slope category
@@ -37,7 +43,7 @@ export function segmentTrack(
     for (let i = 1; i < points.length; i++) {
       const prev = points[i - 1];
       const curr = points[i];
-      const distance = calculateDistance(prev.lat, prev.lon, curr.lat, curr.lon);
+      const distance = distances[i] - distances[i - 1];
       const slope = calculateSignedSlope(curr.ele - prev.ele, distance);
       intervals.push({
         p1: [prev.lat, prev.lon],
@@ -62,7 +68,9 @@ export function segmentTrack(
           isAboveThreshold: false,
           length: totalLength,
           slope: avgSlope,
-          slopeCategory: group[0].category
+          slopeCategory: group[0].category,
+          startIndex: groupStart,
+          endIndex: i
         });
         groupStart = i;
       }
@@ -76,18 +84,13 @@ export function segmentTrack(
   let currentSegment: [number, number][] = [[points[0].lat, points[0].lon]];
   let currentIsAbove = points[0].ele >= altitudeThreshold;
   let currentLength = 0;
+  let currentStartIndex = 0;
 
   for (let i = 1; i < points.length; i++) {
-    const prevPoint = points[i - 1];
     const currentPoint = points[i];
     const isAbove = currentPoint.ele >= altitudeThreshold;
 
-    const segmentDistance = calculateDistance(
-      prevPoint.lat,
-      prevPoint.lon,
-      currentPoint.lat,
-      currentPoint.lon
-    );
+    const segmentDistance = distances[i] - distances[i - 1];
 
     if (isAbove === currentIsAbove) {
       currentSegment.push([currentPoint.lat, currentPoint.lon]);
@@ -98,11 +101,14 @@ export function segmentTrack(
       segments.push({
         points: currentSegment,
         isAboveThreshold: currentIsAbove,
-        length: currentLength
+        length: currentLength,
+        startIndex: currentStartIndex,
+        endIndex: i
       });
       currentSegment = [[currentPoint.lat, currentPoint.lon]];
       currentIsAbove = isAbove;
       currentLength = 0;
+      currentStartIndex = i;
     }
   }
 
@@ -110,7 +116,9 @@ export function segmentTrack(
     segments.push({
       points: currentSegment,
       isAboveThreshold: currentIsAbove,
-      length: currentLength
+      length: currentLength,
+      startIndex: currentStartIndex,
+      endIndex: points.length - 1
     });
   }
 
@@ -127,11 +135,13 @@ export function calculateAbsoluteSlope(elevationChange: number, horizontalDistan
   return Math.abs(calculateSignedSlope(elevationChange, horizontalDistance));
 }
 
+export type SlopeCategory = NonNullable<Segment['slopeCategory']>;
+
 export function getSlopeCategory(
   slope: number,
   threshold1: number,
   threshold2: number
-): Segment['slopeCategory'] {
+): SlopeCategory {
   const abs = Math.abs(slope);
   if (slope >= 0) {
     if (abs < threshold1) return 'uphill-gentle';
@@ -144,13 +154,13 @@ export function getSlopeCategory(
   }
 }
 
-function calculateAboveThresholdDistance(points: TrackPoint[], altitudeThreshold: number): number {
+function calculateAboveThresholdDistance(points: TrackPoint[], altitudeThreshold: number, distances: number[]): number {
   let aboveDistance = 0;
 
   for (let i = 1; i < points.length; i++) {
     const prev = points[i - 1];
     const curr = points[i];
-    const segmentDistance = calculateDistance(prev.lat, prev.lon, curr.lat, curr.lon);
+    const segmentDistance = distances[i] - distances[i - 1];
     const prevAbove = prev.ele >= altitudeThreshold;
     const currAbove = curr.ele >= altitudeThreshold;
 
@@ -173,18 +183,31 @@ export function calculateStats(
   segments: Segment[],
   points: TrackPoint[],
   useSlopeColoring: boolean,
-  slopeThreshold1: number,
-  slopeThreshold2: number,
-  altitudeThreshold: number
+  _slopeThreshold1: number,
+  _slopeThreshold2: number,
+  altitudeThreshold: number,
+  cumulativeDistances?: number[]
 ) {
+  const distances = cumulativeDistances ?? computeCumulativeDistances(points);
+
   const totalDistance = segments.reduce((sum, seg) => sum + seg.length, 0);
-  const aboveThresholdDistance = calculateAboveThresholdDistance(points, altitudeThreshold);
+  const aboveThresholdDistance = calculateAboveThresholdDistance(points, altitudeThreshold, distances);
 
   const percentage = totalDistance > 0 ? (aboveThresholdDistance / totalDistance) * 100 : 0;
 
-  const elevations = points.map(p => p.ele);
-  const minAltitude = elevations.length ? Math.min(...elevations) : 0;
-  const maxAltitude = elevations.length ? Math.max(...elevations) : 0;
+  // Boucles explicites plutôt que Math.min(...points) : le spread sur un
+  // grand tableau depasse la taille de pile d'appels (RangeError au-dela
+  // de ~100k points).
+  let minAltitude = Infinity;
+  let maxAltitude = -Infinity;
+  for (const p of points) {
+    if (p.ele < minAltitude) minAltitude = p.ele;
+    if (p.ele > maxAltitude) maxAltitude = p.ele;
+  }
+  if (!points.length) {
+    minAltitude = 0;
+    maxAltitude = 0;
+  }
 
   let uphillDistance = 0;
   let downhillDistance = 0;
@@ -192,10 +215,8 @@ export function calculateStats(
 
   if (points.length > 1) {
     for (let i = 1; i < points.length; i++) {
-      const prev = points[i - 1];
-      const curr = points[i];
-      const elevationDiff = curr.ele - prev.ele;
-      const segmentDistance = calculateDistance(prev.lat, prev.lon, curr.lat, curr.lon);
+      const elevationDiff = points[i].ele - points[i - 1].ele;
+      const segmentDistance = distances[i] - distances[i - 1];
 
       if (Math.abs(elevationDiff) < 1) {
         flatDistance += segmentDistance;
