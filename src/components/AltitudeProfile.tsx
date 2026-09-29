@@ -135,7 +135,9 @@ export function AltitudeProfile({ points, useSlopeColoring = false, slopeThresho
     }
 
     // find closest point by svg x (distances cumulées croissantes -> recherche binaire)
-    const target = padding + ((svgX - padding) / (width - padding * 2)) * Math.max(totalDistance, 1);
+    // Inverse exact du mapping de tracé x = padding + (d / totalDistance) * (width - 2*padding)
+    // (attention: pas de "+ padding" ici, sinon le point trouvé est décalé de 32 km vers l'avant)
+    const target = ((svgX - padding) / (width - padding * 2)) * Math.max(totalDistance, 1);
     let lo = 0;
     let hi = profile.length - 1;
     while (lo < hi) {
